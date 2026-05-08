@@ -78,15 +78,14 @@ sudo ufw status verbose
 ### 2. 계정/그룹/권한 체계(협업 + 최소 권한)
 
 #### 계정 및 그룹 생성 확인 내역
-    * 생성 계정
-        * agent-admin   : 운영/관리, cron 실행자
-        * agent-dev     : 개발/운영, monitor.sh 작성자
-        * agent-test    : QA/테스트
-    * 생성 그룹
-        * agent-common  : admin, dev, test
-        * agent-core    : admin, dev
+* 생성 계정
+    * agent-admin   : 운영/관리, cron 실행자
+    * agent-dev     : 개발/운영, monitor.sh 작성자
+    * agent-test    : QA/테스트
+* 생성 그룹
+    * agent-common  : admin, dev, test
+    * agent-core    : admin, dev
 ```bash
-# 1. 그룹 생성 common, core
 # 1. 그룹 생성
 sudo groupadd agent-common
 sudo groupadd agent-core
