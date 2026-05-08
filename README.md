@@ -2,133 +2,180 @@
 
 ## 시스템 관제 자동화 스크립트 개발
 
-### 체크리스트
+---
+
+### 1. 기본 보안 및 네트워크 설정
 
 #### SSH 포트 변경(20022) 및 Root 원격 접속 차단 설정 확인 내역
-* SSH란?: 네트워크 상의 다른 컴퓨터에 로그인하거나 원격으로 명령을 실행할 수 있게 해주는 보안 네트워크 프로토콜입니다.
+* SSH(Secure Shell) : 원격 시스템 접속 및 명령 실행을 위한 보안 네트워크 프로토콜
+
 ```bash
-# 1. 설정 파일 수정 (Port 20022 변경 및 Root 로그인 차단)
+# 1. SSH 설정 파일 수정
 sudo nano /etc/ssh/sshd_config
-# 수정 내용: Port 20022 / PermitRootLogin no
 
-# 2. SSH 서비스 시작 및 재구동
-sudo /etc/init.d/ssh start
-# 출력: Starting ssh (via systemctl): ssh.service.
+# 수정 내용
+Port 20022
+PermitRootLogin no
 
-# 3. 네트워크 상태 확인 (포트 활성화 여부 검증)
-ss -tulnp | grep 20022
-# 결과:
-# tcp   LISTEN 0      4096         0.0.0.0:20022      0.0.0.0:* 
-# tcp   LISTEN 0      4096            [::]:20022         [::]:* 
+# 2. SSH 서비스 재시작
+sudo systemctl restart ssh
+
+# 3. SSH 서비스 상태 확인
+sudo systemctl status ssh
+
+# 4. 설정값 확인
+grep -E 'Port|PermitRootLogin' /etc/ssh/sshd_config
+
+# 결과
+# Port 20022
+# PermitRootLogin no
+
+# 5. 포트 리슨 상태 확인
+ss -tulnp | grep ssh
+
+# 결과
+# tcp   LISTEN 0      4096         0.0.0.0:20022      0.0.0.0:*    users:(("sshd",pid=xxx))
+# tcp   LISTEN 0      4096            [::]:20022         [::]:*    users:(("sshd",pid=xxx))
 ```
 
 #### 방화벽(UFW 또는 firewalld) 활성화 및 20022/tcp, 15034/tcp만 허용 내역
+* UFW 활성화 및 허용 포트 설정 내역
+    * 허용 포트 : TCP 20022(SSH), TCP 15034(APP)
 ```bash
-# 0. UFW 설치
+# 1. UFW 설치
 sudo apt install ufw -y
 
-# 1. SSH 포트(20022) 허용
+# 2. 기본 정책 설정
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# 3. SSH 포트 허용
 sudo ufw allow 20022/tcp
-# Rules updated
-# Rules updated (v6)
 
-# 2. 애플리케이션 서비스 포트(15034) 허용
+# 4. APP 포트 허용
 sudo ufw allow 15034/tcp
-# Rules updated
-# Rules updated (v6)
 
-# 3. 방화벽 활성화 (적용)
+# 5. 방화벽 활성화
 sudo ufw enable
-# 결과: Firewall is active and enabled on system startup
 
-# 4. 방화벽 설정 상태 확인
+# 결과
+# Firewall is active and enabled on system startup
+
+# 6. 방화벽 상태 확인
 sudo ufw status verbose
-# 결과: 
+
+# 결과
+# Status: active
+#
 # To                         Action      From
 # --                         ------      ----
-# 20022/tcp                  ALLOW IN    Anywhere                  
-# 15034/tcp                  ALLOW IN    Anywhere                  
-# 20022/tcp (v6)             ALLOW IN    Anywhere (v6)             
+# 20022/tcp                  ALLOW IN    Anywhere
+# 15034/tcp                  ALLOW IN    Anywhere
+# 20022/tcp (v6)             ALLOW IN    Anywhere (v6)
 # 15034/tcp (v6)             ALLOW IN    Anywhere (v6)
 ```
 
-#### 계정/그룹(agent-admin/dev/test, agent-common/core) 생성 확인 내역
+### 2. 계정/그룹/권한 체계(협업 + 최소 권한)
+
+#### 계정 및 그룹 생성 확인 내역
+    * 생성 계정
+        * agent-admin   : 운영/관리, cron 실행자
+        * agent-dev     : 개발/운영, monitor.sh 작성자
+        * agent-test    : QA/테스트
+    * 생성 그룹
+        * agent-common  : admin, dev, test
+        * agent-core    : admin, dev
 ```bash
 # 1. 그룹 생성 common, core
-sudo groupadd common
-sudo groupadd core
+# 1. 그룹 생성
+sudo groupadd agent-common
+sudo groupadd agent-core
 
-# 2. 유저 생성 admin, dev, test
-sudo useradd -m -g common -g core admin #admin만 그룹 2개
-sudo useradd -m -g common dev
-sudo useradd -m -g common test
+# 2. 사용자 생성
+sudo useradd -m -g agent-common -G agent-core agent-admin
+sudo useradd -m -g agent-common -G agent-core agent-dev
+sudo useradd -m -g agent-common agent-test
 
-# 3. id 확인
-id admin
-id dev
-id test
-# 결과 : 
-# admin : uid=1001(admin) gid=1001(common) groups=1001(common),1002(core)
-# dev   : uid=1002(dev) gid=1001(common) groups=1001(common)
-# test  : uid=1003(test) gid=1001(common) groups=1001(common)
+# 3. 사용자 정보 확인
+id agent-admin
+id agent-dev
+id agent-test
 
-# /etc/group 에서  common, core찾기
-grep -E 'common|core' /etc/group
-# common:x:1001:
-# core:x:1002:admin # 보조그룹
+# 결과
+# agent-admin : uid=1001(agent-admin) gid=1001(agent-common) groups=1001(agent-common),1002(agent-core)
+# agent-dev   : uid=1002(agent-dev) gid=1001(agent-common) groups=1001(agent-common),1002(agent-core)
+# agent-test  : uid=1003(agent-test) gid=1001(agent-common) groups=1001(agent-common)
+
+# 4. 그룹 확인
+grep -E 'agent-common|agent-core' /etc/group
+
+# 결과
+# agent-common:x:1001:
+# agent-core:x:1002:agent-admin,agent-dev
 ```
 #### 디렉토리 구조 및 권한(ACL 포함) 확인 내역
-* ACL(Access Control List) : 추가 접근 제어 목록 
+* ACL(Access Control List) : 추가 접근 권한 제어 기능
 ```bash
-# 1. 디렉토리 구조 생성
-sudo mkdir -p /project/common
-sudo mkdir -p /project/core
+# 1. AGENT_HOME 생성
+sudo mkdir -p /home/agent-admin/agent-app
 
-# 2. 기본 소유권 및 그룹 설정
-# common 폴더는 common 그룹이, core 폴더는 core 그룹이 관리
-sudo chown root:common /project/common
-sudo chown root:core /project/core
+# 2. 디렉토리 생성
+sudo mkdir -p /home/agent-admin/agent-app/upload_files
+sudo mkdir -p /home/agent-admin/agent-app/api_keys
+sudo mkdir -p /home/agent-admin/agent-app/bin
+sudo mkdir -p /var/log/agent-app
 
-# 3. 기본 권한 설정 (소유자/그룹은 모든 권한, 나머지는 접근 금지)
-sudo chmod 770 /project/common
-sudo chmod 770 /project/core
+# 3. 그룹 설정
+sudo chown -R agent-admin:agent-common /home/agent-admin/agent-app/upload_files
+sudo chown -R agent-admin:agent-core /home/agent-admin/agent-app/api_keys
+sudo chown -R agent-admin:agent-core /var/log/agent-app
 
-# 4. ACL 설정 (특정 사용자에게 특별 권한 부여)
-# test 계정은 common 폴더를 '읽기'만 가능하도록 설정
-sudo setfacl -m u:test:r-x /project/common
-# dev 계정은 core 폴더에 접근조차 못 하게 명시적으로 차단
-sudo setfacl -m u:dev:--- /project/core
+# 4. 권한 설정
+sudo chmod 770 /home/agent-admin/agent-app/upload_files
+sudo chmod 770 /home/agent-admin/agent-app/api_keys
+sudo chmod 770 /var/log/agent-app
 
-ls -ld /project/common /project/core
-# 결과 (+ 기호는 일반적인 리눅스 권한 외에 ACL 설정이 적용되어 있음을 의미)
-# drwxrwx---+  2 root common 4096 May  8 21:50 /project/common
-# drwxrwx---+  2 root core   4096 May  8 21:50 /project/core
+# 5. ACL 설정
+# agent-test는 upload_files 읽기/쓰기 가능
+sudo setfacl -m u:agent-test:rwx /home/agent-admin/agent-app/upload_files
 
-getfacl /project/common
-getfacl /project/core
+# agent-test는 api_keys 접근 차단
+sudo setfacl -m u:agent-test:--- /home/agent-admin/agent-app/api_keys
+
+# 6. 권한 확인
+ls -ld /home/agent-admin/agent-app/upload_files
+ls -ld /home/agent-admin/agent-app/api_keys
+ls -ld /var/log/agent-app
+
 # 결과
-# getfacl /project/core
-# getfacl: Removing leading '/' from absolute path names
-# # file: project/common
-# # owner: root
-# # group: common
+# drwxrwx---+ 2 agent-admin agent-common 4096 May 8 21:50 upload_files
+# drwxrwx---+ 2 agent-admin agent-core   4096 May 8 21:50 api_keys
+# drwxrwx---+ 2 agent-admin agent-core   4096 May 8 21:50 agent-app
+
+# 7. ACL 확인
+getfacl /home/agent-admin/agent-app/upload_files
+getfacl /home/agent-admin/agent-app/api_keys
+
+# 결과
+# file: upload_files
+# owner: agent-admin
+# group: agent-common
 # user::rwx
-# user:test:r-x
+# user:agent-test:rwx
 # group::rwx
-# mask::rwx  //ACL로 부여할 수 있는 최대 권한 범위
+# mask::rwx
 # other::---
 
-# getfacl: Removing leading '/' from absolute path names
-# # file: project/core
-# # owner: root
-# # group: core
+# file: api_keys
+# owner: agent-admin
+# group: agent-core
 # user::rwx
-# user:dev:---
+# user:agent-test:---
 # group::rwx
 # mask::rwx
 # other::---
 ```
-#### 앱 Boot Sequence 5단계 [OK] 및 “Agent READY” 확인 내역
+#### 3. 앱 Boot Sequence 5단계 [OK] 및 “Agent READY” 확인 내역
 
 #### monitor.sh 실행 결과(프로세스/포트/리소스/경고) 내역
 
