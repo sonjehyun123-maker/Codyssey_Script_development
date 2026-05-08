@@ -53,9 +53,81 @@ sudo ufw status verbose
 ```
 
 #### 계정/그룹(agent-admin/dev/test, agent-common/core) 생성 확인 내역
+```bash
+# 1. 그룹 생성 common, core
+sudo groupadd common
+sudo groupadd core
 
+# 2. 유저 생성 admin, dev, test
+sudo useradd -m -g common -g core admin #admin만 그룹 2개
+sudo useradd -m -g common dev
+sudo useradd -m -g common test
+
+# 3. id 확인
+id admin
+id dev
+id test
+# 결과 : 
+# admin : uid=1001(admin) gid=1001(common) groups=1001(common),1002(core)
+# dev   : uid=1002(dev) gid=1001(common) groups=1001(common)
+# test  : uid=1003(test) gid=1001(common) groups=1001(common)
+
+# /etc/group 에서  common, core찾기
+grep -E 'common|core' /etc/group
+# common:x:1001:
+# core:x:1002:admin # 보조그룹
+```
 #### 디렉토리 구조 및 권한(ACL 포함) 확인 내역
+* ACL(Access Control List) : 추가 접근 제어 목록 
+```bash
+# 1. 디렉토리 구조 생성
+sudo mkdir -p /project/common
+sudo mkdir -p /project/core
 
+# 2. 기본 소유권 및 그룹 설정
+# common 폴더는 common 그룹이, core 폴더는 core 그룹이 관리
+sudo chown root:common /project/common
+sudo chown root:core /project/core
+
+# 3. 기본 권한 설정 (소유자/그룹은 모든 권한, 나머지는 접근 금지)
+sudo chmod 770 /project/common
+sudo chmod 770 /project/core
+
+# 4. ACL 설정 (특정 사용자에게 특별 권한 부여)
+# test 계정은 common 폴더를 '읽기'만 가능하도록 설정
+sudo setfacl -m u:test:r-x /project/common
+# dev 계정은 core 폴더에 접근조차 못 하게 명시적으로 차단
+sudo setfacl -m u:dev:--- /project/core
+
+ls -ld /project/common /project/core
+# 결과 (+ 기호는 일반적인 리눅스 권한 외에 ACL 설정이 적용되어 있음을 의미)
+# drwxrwx---+  2 root common 4096 May  8 21:50 /project/common
+# drwxrwx---+  2 root core   4096 May  8 21:50 /project/core
+
+getfacl /project/common
+getfacl /project/core
+# 결과
+# getfacl /project/core
+# getfacl: Removing leading '/' from absolute path names
+# # file: project/common
+# # owner: root
+# # group: common
+# user::rwx
+# user:test:r-x
+# group::rwx
+# mask::rwx  //ACL로 부여할 수 있는 최대 권한 범위
+# other::---
+
+# getfacl: Removing leading '/' from absolute path names
+# # file: project/core
+# # owner: root
+# # group: core
+# user::rwx
+# user:dev:---
+# group::rwx
+# mask::rwx
+# other::---
+```
 #### 앱 Boot Sequence 5단계 [OK] 및 “Agent READY” 확인 내역
 
 #### monitor.sh 실행 결과(프로세스/포트/리소스/경고) 내역
