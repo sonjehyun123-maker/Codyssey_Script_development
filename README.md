@@ -107,19 +107,12 @@ sudo ufw status verbose
 
 # 2. 계정/그룹/권한 체계(협업 + 최소 권한)
 
-## 계정 및 그룹 생성 확인 내역
+## 계정 및 그룹 생성 
 
-### 생성 계정
-
-* agent-admin : 운영/관리, cron 실행자
-* agent-dev : 개발/운영, monitor.sh 작성자
-* agent-test : QA/테스트
-
-### 생성 그룹
-
-* agent-common : admin, dev, test
-* agent-core : admin, dev
-
+| 그룹명 | 포함 사용자 | 역할 | 접근 가능 영역 | 주요 권한 |
+|---|---|---|---|---|
+| agent-common | agent-admin<br>agent-dev<br>agent-test | 협업 및 공용 작업 그룹 | upload_files | 파일 업로드, 조회, 수정 가능 |
+| agent-core | agent-admin<br>agent-dev | 핵심 운영/보안 그룹 | api_keys<br>/var/log/agent-app<br>monitor.sh | API Key 관리, 로그 관리, monitor.sh 실행 및 수정 |
 ```bash
 # 1. 그룹 생성
 sudo groupadd agent-common
