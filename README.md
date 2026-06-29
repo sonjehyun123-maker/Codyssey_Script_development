@@ -247,6 +247,36 @@ tcp LISTEN 0 128 0.0.0.0:15034 0.0.0.0:* users:(("python3",pid=1234))
 
 # 5. 시스템 관제 자동화
 
+## 앱 실행 및 성공 기준
+
+조건:
+
+- 일반 계정(agent-admin)으로 실행
+- Boot Sequence 5단계 모두 [OK]
+- 마지막에 Agent READY 출력
+- 15034 포트 LISTEN 상태 확인
+
+```bash
+cd $AGENT_HOME
+python3 agent_app.py
+```
+
+실행 결과:
+
+```text
+> Starting Agent Boot Sequence...
+[1/5] Checking User Account               [OK]
+[2/5] Verifying Environment Variables     [OK]
+[3/5] Checking Required Files             [OK]
+[4/5] Checking Port Availability          [OK]
+[5/5] Verifying Log Permission            [OK]
+------------------------------------------------------------
+All Boot Checks Passed!
+Agent READY
+Listening on 0.0.0.0:15034
+```
+
+
 ## Health Check
 
 ### 프로세스 확인
@@ -337,14 +367,12 @@ echo "$LOG_LINE" >> "$LOG_FILE"
 ## 로그 포맷
 
 ```text
-[2026-06-29 12:00:00]
-PID:1234
-CPU:3.0%
-MEM:7.2%
-DISK_USED:1%
+[2026-06-29 12:00:00] PID:1234 CPU:3.0% MEM:7.2% DISK_USED:1%
 ```
 
-시간 기준 장애 추적 및 자동 분석을 쉽게 하기 위한 구조이다.
+로그 포맷은 Timestamp + PID + Resource Metric 구조로 고정하였다.
+
+시간 기준 장애 추적과 grep, awk 기반 자동 분석 및 후처리를 쉽게 하기 위함이다.
 
 ---
 
@@ -352,9 +380,9 @@ DISK_USED:1%
 
 ## 정책
 
-- monitor.log : 현재 로그
-- monitor.log.1 ~ .10 : 이전 로그
-- 최대 10개 유지
+* monitor.log : 현재 로그
+* monitor.log.1 ~ monitor.log.10 : 이전 로그
+* 최대 10개 유지
 
 ---
 
@@ -364,10 +392,10 @@ DISK_USED:1%
 1. monitor.log 크기 확인
 2. 10MB 초과 여부 확인
 3. monitor.log.10 삭제
-4. .9 → .10
-5. .8 → .9
+4. monitor.log.9 → monitor.log.10
+5. monitor.log.8 → monitor.log.9
 6. ...
-7. .1 → .2
+7. monitor.log.1 → monitor.log.2
 8. monitor.log → monitor.log.1
 9. 새로운 monitor.log 생성
 ```
@@ -427,18 +455,31 @@ crontab -e
 
 ---
 
+## 리다이렉션 기호
+
+```text
+>  : 기존 파일 내용을 삭제하고 새로 작성한다.
+>> : 기존 내용을 유지하면서 파일 끝에 추가(Append)한다.
+```
+
+cron.log는 실행 이력을 계속 누적해야 하므로 `>>`를 사용하였다.
+
+---
+
 # 9. 장애 대응 정책
 
 ## Hard Failure
 
 즉시 종료:
 
-- 프로세스 없음
-- 포트 미오픈
+* 프로세스 없음
+* 포트 미오픈
 
 ```bash
 exit 1
 ```
+
+서비스 자체가 정상적으로 요청을 처리할 수 없는 상태이므로 즉시 종료하여 장애를 명확하게 감지하도록 하였다.
 
 ---
 
@@ -446,18 +487,20 @@ exit 1
 
 서비스는 계속 동작:
 
-- CPU 임계치 초과
-- Memory 임계치 초과
-- Disk 임계치 초과
-- Firewall 비활성화
+* CPU 임계치 초과
+* Memory 임계치 초과
+* Disk 임계치 초과
+* Firewall 비활성화
 
 ```text
 [WARNING]
 ```
 
+서비스는 정상 동작할 수 있지만 향후 장애로 이어질 가능성이 있으므로 WARNING 로그만 남기고 계속 실행하도록 설계하였다.
+
 ---
 
-# 10. 장애 분석 순서
+# 장애 분석 순서
 
 ```text
 1. ss -tulnp
@@ -469,3 +512,131 @@ exit 1
 
 ---
 
+## pgrep 사용 이유
+
+```text
+pgrep는 프로세스 이름 또는 전체 command line 기준으로 프로세스를 검색할 수 있다.
+
+ps | grep 방식은 grep 프로세스가 함께 검색될 수 있고,
+출력 결과를 추가로 파싱해야 한다.
+
+반면 pgrep은 PID만 반환하므로 자동화 스크립트에서 사용하기 적합하다.
+```
+
+---
+
+## ss 사용 이유
+
+```text
+ss(Socket Statistics)는 Linux Kernel의 socket 정보를 직접 조회한다.
+
+LISTEN 상태, TCP/UDP 연결 상태 및 PID 정보를 빠르게 확인할 수 있으며,
+netstat보다 성능이 좋고 최신 Linux 환경에서 권장되는 도구이다.
+```
+
+예시:
+
+```text
+tcp LISTEN 0 128 0.0.0.0:15034 0.0.0.0:* users:(("python3",pid=1234,fd=3))
+```
+
+---
+
+## 웹 서버(Nginx)로 변경될 경우
+
+변경 대상:
+
+* 프로세스명
+
+  * agent_app.py → nginx
+
+* 포트
+
+  * 15034 → 80 또는 443
+
+* 로그 경로
+
+  * access.log
+  * error.log
+
+* 모니터링 항목 추가
+
+  * HTTP 5xx 비율
+  * worker process 상태
+  * 연결 수(Connection)
+
+---
+
+## 프로세스는 살아있지만 포트가 안 열리는 경우
+
+가능한 원인:
+
+1. bind 실패
+2. 포트 충돌
+3. 권한 문제
+4. 방화벽 차단
+5. startup incomplete
+6. 애플리케이션 내부 deadlock
+7. 예외 발생 후 비정상 초기화
+
+확인 순서:
+
+1.
+
+```bash
+ss -tulnp
+```
+
+LISTEN 상태 확인
+
+2.
+
+```bash
+tail -f app.log
+```
+
+애플리케이션 로그 확인
+
+3.
+
+```bash
+pgrep -a agent_app.py
+ps -fp PID
+```
+
+프로세스 상태 확인
+
+4.
+
+```bash
+journalctl -xe
+```
+
+시스템 로그 확인
+
+5.
+
+```bash
+sudo ufw status
+```
+
+방화벽 정책 확인
+
+---
+
+## 로그 급증 대응
+
+### 단기 대응
+
+* 오래된 로그 삭제
+* logrotate 강제 수행
+* 로그 압축
+* 디스크 사용량 확인
+* 불필요한 DEBUG 로그 비활성화
+
+### 중기 대응
+
+* 로그 레벨 조정
+* 중앙 로그 수집 시스템 구축
+* 로그 보존 정책 수립
+* 모니터링 및 알림 연동
