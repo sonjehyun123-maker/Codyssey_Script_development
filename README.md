@@ -70,6 +70,8 @@ PermitRootLogin no
 sudo systemctl restart ssh
 sudo systemctl status ssh
 ss -tulnp | grep ssh
+# tcp   LISTEN 0      4096         0.0.0.0:20022      0.0.0.0:*    users:(("sshd",pid=xxx))
+# tcp   LISTEN 0      4096            [::]:20022         [::]:*    users:(("sshd",pid=xxx))
 ```
 
 ### 적용 이유
@@ -92,7 +94,14 @@ sudo ufw allow 20022/tcp
 sudo ufw allow 15034/tcp
 
 sudo ufw enable
+# Firewall is active and enabled on system startup
 sudo ufw status verbose
+# To                         Action      From
+# --                         ------      ----
+# 20022/tcp                  ALLOW IN    Anywhere
+# 15034/tcp                  ALLOW IN    Anywhere
+# 20022/tcp (v6)             ALLOW IN    Anywhere (v6)
+# 15034/tcp (v6)             ALLOW IN    Anywhere (v6)
 ```
 
 ### 정책
@@ -145,26 +154,10 @@ sudo mkdir -p /var/log/agent-app
 ## 권한 설정
 
 ```bash
-sudo chown -R agent-admin:agent-common \
-/home/agent-admin/agent-app/upload_files
-
-sudo chown -R agent-admin:agent-core \
-/home/agent-admin/agent-app/api_keys
-
-sudo chown -R agent-admin:agent-core \
-/var/log/agent-app
-
-sudo chmod 2770 \
-/home/agent-admin/agent-app/upload_files
-
-sudo chmod 2770 \
-/home/agent-admin/agent-app/api_keys
-
-sudo chmod 2770 \
-/var/log/agent-app
-
-sudo chmod 750 \
-/home/agent-admin/agent-app
+sudo chmod 2770 /home/agent-admin/agent-app/upload_files
+sudo chmod 2770 /home/agent-admin/agent-app/api_keys
+sudo chmod 2770 /var/log/agent-app
+sudo chmod 750 /home/agent-admin/agent-app
 ```
 
 ---
@@ -174,13 +167,43 @@ sudo chmod 750 \
 ```bash
 sudo apt install acl -y
 
-sudo setfacl -m u:agent-test:rwx \
-/home/agent-admin/agent-app/upload_files
+sudo setfacl -m u:agent-test:rwx /home/agent-admin/agent-app/upload_files
+sudo setfacl -m u:agent-test:--- /home/agent-admin/agent-app/api_keys
 
-sudo setfacl -m u:agent-test:--- \
-/home/agent-admin/agent-app/api_keys
+ls -ld /home/agent-admin/agent-app/upload_files
+ls -ld /home/agent-admin/agent-app/api_keys
+ls -ld /var/log/agent-app
+
+# 결과
+# drwxrws---+ 2 agent-admin agent-common 4096 May 8 21:50 upload_files
+# drwxrws---+ 2 agent-admin agent-core   4096 May 8 21:50 api_keys
+# drwxrws---+ 2 agent-admin agent-core   4096 May 8 21:50 agent-app
 ```
 
+
+```bash
+getfacl: Removing leading '/' from absolute path names
+# file: home/agent-admin/agent-app/upload_files
+# owner: agent-admin
+# group: agent-common
+# flags: -s-
+user::rwx
+user:agent-test:rwx
+group::rwx
+mask::rwx
+other::---
+
+getfacl: Removing leading '/' from absolute path names
+# file: home/agent-admin/agent-app/api_keys
+# owner: agent-admin
+# group: agent-core
+# flags: -s-
+user::rwx
+user:agent-test:---
+group::rwx
+mask::rwx
+other::---
+```
 ---
 
 ## 적용 목적
@@ -563,65 +586,95 @@ tcp LISTEN 0 128 0.0.0.0:15034 0.0.0.0:* users:(("python3",pid=1234,fd=3))
 
   * HTTP 5xx 비율
   * worker process 상태
-  * 연결 수(Connection)
+  * 동시 접속자 수(Connection)
 
 ---
 
-## 프로세스는 살아있지만 포트가 안 열리는 경우
+### 프로세스는 살아있지만 포트가 안 열리는 경우
 
-가능한 원인:
+프로세스(PID)는 존재하지만 특정 포트가 `LISTEN` 상태가 아니라면,
+애플리케이션은 실행 중이지만 외부 요청을 받을 수 없는 상태이다.
 
-1. bind 실패
-2. 포트 충돌
-3. 권한 문제
-4. 방화벽 차단
-5. startup incomplete
-6. 애플리케이션 내부 deadlock
-7. 예외 발생 후 비정상 초기화
+### 가능한 원인
 
-확인 순서:
+#### 1. bind 실패
 
-1.
+애플리케이션이 포트를 열기 위한 `bind()` 과정에서 오류가 발생한 경우이다.
+
+예시:
+- 잘못된 IP 주소 지정
+- 이미 사용 중인 포트 지정
+- 애플리케이션 설정 오류
+
+---
+
+#### 2. 포트 충돌
+
+다른 프로세스가 이미 동일한 포트를 사용 중인 경우이다.
+
+예시:
+
+```text
+nginx        → 15034 사용 중
+agent_app.py → 15034 사용 시도 → 실패
+```
+
+확인:
 
 ```bash
 ss -tulnp
 ```
 
-LISTEN 상태 확인
+---
 
-2.
+#### 3. 권한 문제
 
-```bash
-tail -f app.log
+일반 사용자가 권한이 필요한 포트를 열려고 하는 경우이다.
+
+예시:
+
+```text
+80, 443, 22 포트는 일반 사용자가 사용할 수 없는
+특권 포트(Privileged Port)이다.
 ```
 
-애플리케이션 로그 확인
+따라서 애플리케이션이 실행되어도 포트를 열지 못할 수 있다.
 
-3.
+---
 
-```bash
-pgrep -a agent_app.py
-ps -fp PID
+#### 4. 애플리케이션 내부 Deadlock
+
+프로세스는 살아 있지만 내부 작업이 멈춘 상태이다.
+
+예시:
+
+```text
+PID 존재
+프로세스 실행 중
+포트 초기화 코드까지 도달하지 못함
 ```
 
-프로세스 상태 확인
+또는
 
-4.
-
-```bash
-journalctl -xe
+```text
+포트 오픈 이후 내부 스레드가 모두 대기 상태에 빠짐
 ```
 
-시스템 로그 확인
+서비스는 응답하지 않지만 프로세스는 종료되지 않는다.
 
-5.
+---
 
-```bash
-sudo ufw status
+### 정리
+
+```text
+프로세스 존재(PID 있음)
+≠
+서비스 정상
+
+서비스 정상 여부는
+'프로세스 실행'과 '포트 LISTEN' 상태를
+모두 확인해야 판단할 수 있다.
 ```
-
-방화벽 정책 확인
-
 ---
 
 ## 로그 급증 대응

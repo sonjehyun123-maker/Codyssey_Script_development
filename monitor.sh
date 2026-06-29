@@ -10,7 +10,7 @@ MAX_SIZE=$((10 * 1024 * 1024))
 
 touch "$STATS_FILE"
 touch "$LOG_FILE"
-
+# 프로세스 살아있는지 확인
 echo "====== SYSTEM MONITOR RESULT ======"
 echo
 
@@ -24,12 +24,12 @@ if [ -z "$PID" ]; then
 fi
 
 echo "Checking process '$APP_NAME'... [OK] (PID: $PID)"
-
+# 포트 확인 
 if ! ss -tuln | grep LISTEN | grep -q ":$PORT "; then
     echo "Checking port $PORT... [FAIL]"
     exit 1
 fi
-
+# 방화벽 확인
 echo "Checking port $PORT... [OK]"
 
 UFW_CHECK=$(sudo ufw status | grep "Status: active")
@@ -37,7 +37,7 @@ UFW_CHECK=$(sudo ufw status | grep "Status: active")
 if [ -z "$UFW_CHECK" ]; then
     echo "[WARNING] Firewall is inactive."
 fi
-
+# CPU, 메모리, 디스크 추출
 CPU=$(top -bn2 -d 0.5 | awk '/Cpu\(s\):/ {print 100 - $8}' | tail -n 1)
 MEM=$(free | awk '/Mem:/ {print $3/$2 * 100.0}')
 DISK=$(df -Ph / | tail -1 | awk '{print $5}' | sed 's/%//')
@@ -64,6 +64,7 @@ echo "$TIMESTAMP $CPU $MEM" >> "$STATS_FILE"
 
 LOG_LINE="[$TIMESTAMP] PID:$PID CPU:$(printf "%.1f" "$CPU")% MEM:$(printf "%.1f" "$MEM")% DISK_USED:$DISK%"
 
+#로그 로테이션
 echo "$LOG_LINE" >> "$LOG_FILE"
 
 if [ "$(stat -c%s "$LOG_FILE")" -gt "$MAX_SIZE" ]; then
